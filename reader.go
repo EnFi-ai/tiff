@@ -20,8 +20,8 @@ import (
 	"io"
 	"math"
 
+	"github.com/hhrutter/tiff/lzw"
 	"golang.org/x/image/ccitt"
-	"golang.org/x/image/tiff/lzw"
 )
 
 // A FormatError reports that the input is not a valid TIFF image.
@@ -983,8 +983,18 @@ func decode(d *decoder) (img image.Image, err error) {
 				r := ccitt.NewReader(io.NewSectionReader(d.r, offset, n), order, ccitt.Group4, blkW, blkH, opts)
 				d.buf, err = readBuf(r, d.buf, blockMaxDataSize)
 			case cLZW:
+				// Some encoders leave bytes after a block's last pixel: no EOI
+				// code, or a code the dictionary never defined. Reading only
+				// what the block holds stops before them; the caller below
+				// still rejects a block that comes back short.
+				lim := blockMaxDataSize
+				if samples := len(d.features[tBitsPerSample]); samples > 0 {
+					if exact := (int64(blkW)*int64(samples)*int64(d.bpp) + 7) / 8 * int64(blkH); exact > 0 && exact <= blockMaxDataSize {
+						lim = exact
+					}
+				}
 				r := lzw.NewReader(io.NewSectionReader(d.r, offset, n), lzw.MSB, 8)
-				d.buf, err = readBuf(r, d.buf, blockMaxDataSize)
+				d.buf, err = readBuf(r, d.buf, lim)
 				r.Close()
 			case cDeflate, cDeflateOld:
 				var r io.ReadCloser
