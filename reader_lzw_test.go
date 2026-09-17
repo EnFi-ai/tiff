@@ -140,3 +140,60 @@ func TestDecodeLZWStripWithTrailingUndefinedCode(t *testing.T) {
 		t.Errorf("bounds = %v, want %v", got, want)
 	}
 }
+
+// fillToSlot emits literals until the next free dictionary slot reaches want,
+// appending each decoded byte to out. The first code after a clear defines no
+// entry, so it is emitted without advancing.
+func (e *lzwEncoder) fillToSlot(want int, out []byte) []byte {
+	e.put(0)
+	out = append(out, 0)
+	for i := 1; e.next < want; i++ {
+		e.emit(i % 256)
+		out = append(out, byte(i%256))
+	}
+	return out
+}
+
+// lzwTableFullStream emits codes until the next free dictionary slot is the last
+// one, then uses that code itself, so the decoder must expand it from a live
+// prior string. The stream is padded to cover exactly one strip.
+func lzwTableFullStream(tb testing.TB, payload int) []byte {
+	tb.Helper()
+
+	e := newLZWEncoder()
+	written := len(e.fillToSlot(lzwDictSize-2, nil))
+
+	// A two-byte prior string makes the expansion three bytes, so a
+	// mis-expansion is short rather than coincidentally the right length.
+	e.emit(lzwFirstCode)
+	written += 2
+	e.emit(lzwDictSize - 1)
+	written += 3
+
+	for i := 0; written < payload; i++ {
+		e.emit(i % 256)
+		written++
+	}
+	if written != payload {
+		tb.Fatalf("stream decodes to %d bytes, want exactly one strip of %d", written, payload)
+	}
+
+	e.put(lzwEOFCode)
+	return e.bytes()
+}
+
+// A strip whose dictionary fills and then uses the code equal to the next free
+// slot must still decode. Signalling a full dictionary by clearing last made
+// that code expand from an entry that was never defined.
+func TestDecodeLZWTableFullStrip(t *testing.T) {
+	const w, h = 62, 62
+
+	b := buildSingleStripLZWTIFF(t, w, h, lzwTableFullStream(t, w*h))
+	img, err := Decode(bytes.NewReader(b))
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if got, want := img.Bounds(), image.Rect(0, 0, w, h); got != want {
+		t.Errorf("bounds = %v, want %v", got, want)
+	}
+}

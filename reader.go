@@ -20,8 +20,8 @@ import (
 	"io"
 	"math"
 
+	"github.com/hhrutter/tiff/lzw"
 	"golang.org/x/image/ccitt"
-	"golang.org/x/image/tiff/lzw"
 )
 
 // A FormatError reports that the input is not a valid TIFF image.
